@@ -8,7 +8,7 @@ and then:
 ```
 mpv http://localhost:8000/stream/<video_file>
 ```
-It also can be used with nested folders:
+It also can be used with nested folders inside D://Videos:
 ```
 mpv http://localhost:8000/stream/4k/<video_file>
 ```
