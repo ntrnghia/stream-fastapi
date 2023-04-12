@@ -3,7 +3,10 @@ import os
 
 import aiofiles
 import gdown
-from fastapi import FastAPI, Request
+import zipfile
+import asyncio
+import rarfile
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -11,28 +14,38 @@ from starlette.middleware.base import BaseHTTPMiddleware
 app = FastAPI()
 
 STREAM_PREFIX = "/stream/"
-
-
-# class FileIterator:
-#     def __init__(self, file_path, start, end, chunk_size=8192):
-#         self.file_path = file_path
-#         self.start = start
-#         self.end = end
-#         self.chunk_size = chunk_size
-
-#     async def __aiter__(self):
-#         async with aiofiles.open(self.file_path, "rb") as file:
-#             await file.seek(self.start)
-#             remaining = self.end - self.start + 1
-#             while remaining:
-#                 to_read = min(remaining, self.chunk_size)
-#                 data = await file.read(to_read)
-#                 remaining -= to_read
-#                 yield data
+VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.flv', '.wmv')
 
 
 async def video_stream(file_path, request: Request, chunk_size=8192):
-    file_size = os.path.getsize(file_path)
+    video_file = None
+    file_size = None
+
+    if file_path.lower().endswith(".zip"):
+        with zipfile.ZipFile(file_path, 'r') as zf:
+            for file in zf.namelist():
+                if file.lower().endswith(VIDEO_EXTS):
+                    video_file = file
+                    break
+            if not video_file:
+                raise HTTPException(
+                    status_code=404, detail="Video file not found in archive")
+            file_size = zf.getinfo(video_file).file_size
+
+    elif file_path.lower().endswith(".rar"):
+        with rarfile.RarFile(file_path, 'r') as rf:
+            for file in rf.infolist():
+                if file.filename.lower().endswith(VIDEO_EXTS):
+                    video_file = file.filename
+                    break
+            if not video_file:
+                raise HTTPException(
+                    status_code=404, detail="Video file not found in archive")
+            file_size = file.file_size
+
+    else:
+        file_size = os.path.getsize(file_path)
+
     start = 0
     end = file_size - 1
     range_header = request.headers.get("range")
@@ -50,14 +63,45 @@ async def video_stream(file_path, request: Request, chunk_size=8192):
     }
 
     async def file_stream():
-        async with aiofiles.open(file_path, "rb") as file:
-            await file.seek(start)
-            remaining = end - start + 1
-            while remaining:
-                to_read = min(remaining, chunk_size)
-                data = await file.read(to_read)
-                remaining -= to_read
-                yield data
+        if file_path.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(file_path) as zip_file:
+                    with zip_file.open(video_file, "r") as f:
+                        f.seek(start)
+                        remaining = end - start + 1
+                        while remaining:
+                            to_read = min(remaining, chunk_size)
+                            data = f.read(to_read)
+                            remaining -= to_read
+                            yield data
+                            await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                pass
+
+        elif file_path.lower().endswith(".rar"):
+            try:
+                with rarfile.RarFile(file_path) as rar_file:
+                    with rar_file.open(video_file, "r") as f:
+                        f.seek(start)
+                        remaining = end - start + 1
+                        while remaining:
+                            to_read = min(remaining, chunk_size)
+                            data = f.read(to_read)
+                            remaining -= to_read
+                            yield data
+                            await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                pass
+
+        else:
+            async with aiofiles.open(file_path, "rb") as f:
+                await f.seek(start)
+                remaining = end - start + 1
+                while remaining:
+                    to_read = min(remaining, chunk_size)
+                    data = await f.read(to_read)
+                    remaining -= to_read
+                    yield data
 
     return StreamingResponse(
         file_stream(),
