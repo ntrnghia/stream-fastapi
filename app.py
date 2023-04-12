@@ -2,6 +2,7 @@ from pathlib import PurePath
 import os
 
 import aiofiles
+import gdown
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -82,3 +83,20 @@ class VideoStreamMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(VideoStreamMiddleware)
 app.mount("/videos", StaticFiles(directory="videos"), name="videos")
+
+
+@app.get("/gdrive/{file_id}")
+async def download_and_stream_gdrive(file_id: str, request: Request):
+    # Set up the output directory and file path
+    output_directory = "videos"
+    output_filename = f"{file_id}.mp4"
+    output_file_path = os.path.join(output_directory, output_filename)
+
+    # Check if the file is already in the "videos" folder
+    if not os.path.isfile(output_file_path):
+        # Download the file from Google Drive using gdown
+        gdrive_url = f"https://drive.google.com/uc?id={file_id}"
+        gdown.download(gdrive_url, output_file_path)
+
+    # Stream the video
+    return await video_stream(output_file_path, request)
